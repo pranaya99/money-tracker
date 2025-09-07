@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import {
   State, loadState, saveState,
   addExpenseToState, markPayrollPostedInState, markRentPaidInState
-} from '../../lib/clientStore';
+} from '../../lib/store';
 
 type Expense = State['expenses'][number];
 type Txn     = State['txns'][number];
