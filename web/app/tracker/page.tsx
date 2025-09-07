@@ -1,7 +1,7 @@
 'use client';
 
 export const dynamic = 'force-dynamic';
-export const revalidate = 0;
+
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -67,7 +67,6 @@ export default function Tracker() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
-  const [connected, setConnected] = useState(true);
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState('');
 
@@ -79,17 +78,12 @@ export default function Tracker() {
   ]);
   const [vibe, setVibe] = useState(vibes.current[0]);
 
-  // Form modal
-  const [openForm, setOpenForm] = useState(false);
-  const [form, setForm] = useState({ name: '', category: '', amount: '', date: todayStr() });
-
   // --------- API (relative same-origin) ---------
   async function fetchBalances(){ const r=await fetch('/api/balances', { cache:'no-store' }); setAccounts((await r.json()).accounts||[]); }
   async function fetchTxns(){ const r=await fetch('/api/transactions', { cache:'no-store' }); const j=await r.json(); setTxns((j.transactions||[]).sort((a:Txn,b:Txn)=> b.id.localeCompare(a.id))); }
   async function fetchAlerts(){ const r=await fetch('/api/alerts', { cache:'no-store' }); const j=await r.json(); setAlerts((j.alerts||[]).sort((a:Alert,b:Alert)=> (b.created_at||'').localeCompare(a.created_at||''))); }
   async function fetchExpenses(){ const r=await fetch('/api/expenses', { cache:'no-store' }); const j=await r.json(); setExpenses((j.expenses||[]).sort((a:Expense,b:Expense)=> (b.date||'').localeCompare(a.date||''))); }
   async function fetchCategories(){ const r=await fetch('/api/categories', { cache:'no-store' }); const j=await r.json(); setCategories((j.categories||[]).sort()); }
-
   async function refreshAll(){ await Promise.all([fetchBalances(),fetchTxns(),fetchAlerts(),fetchExpenses(),fetchCategories()]); }
 
   async function markRentPaid() {
@@ -101,6 +95,7 @@ export default function Tracker() {
       fireConfetti();
     } finally { setBusy(false); }
   }
+
   async function markPayrollDeposited() {
     setBusy(true);
     try {
@@ -109,6 +104,18 @@ export default function Tracker() {
       setFlash('Payroll deposited. ✅'); setTimeout(()=>setFlash(''), 1400);
     } finally { setBusy(false); }
   }
+
+  // === RESET & GO BACK TO WELCOME ===
+  async function resetAndGoToSetup() {
+    try {
+      await fetch('/api/reset', { method:'POST' });  // wipe in-memory store on server
+    } catch {}
+    router.push('/welcome');
+  }
+
+  // Add expense modal
+  const [openForm, setOpenForm] = useState(false);
+  const [form, setForm] = useState({ name: '', category: '', amount: '', date: todayStr() });
 
   async function submitExpense(e: React.FormEvent){
     e.preventDefault();
@@ -125,16 +132,6 @@ export default function Tracker() {
     await refreshAll();
     setFlash('Expense logged! 🎉'); setTimeout(()=>setFlash(''), 1600);
     fireConfetti();
-  }
-
-  // Clear everything and go back to setup
-  async function resetAndGoToSetup() {
-    setBusy(true);
-    try {
-      // simple clear: server uses in-memory store; expose a clear by POST to /api/expenses with {reset:true}? If not, just reload to welcome so new setup overwrites.
-      // For demo: navigate to /welcome. New setup values will overwrite.
-      router.push('/welcome');
-    } finally { setBusy(false); }
   }
 
   useEffect(()=>{ refreshAll().catch(console.error); },[]);
@@ -188,38 +185,42 @@ export default function Tracker() {
   const donut = donutPaths(byCat.entries, byCat.total);
 
   // UI
-  return (
-    <main style={{ fontFamily:'ui-sans-serif, system-ui', padding:24, maxWidth:1240, margin:'0 auto' }}>
-      {/* header */}
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
-        <div>
-          <h1 style={{ fontSize:28, fontWeight:800, marginBottom:4 }}>Pranaya’s Money Tracker</h1>
-          <p style={{ opacity:.75, marginBottom:8 }}>
-            Add expenses, categorize spending & income, and budget at a glance with friendly charts and alerts.
-          </p>
-        </div>
-        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-          <button
-            onClick={()=>router.push('/welcome')}
-            style={{ padding:'8px 12px', border:'1px solid #ddd', borderRadius:10, background:'#fff' }}
-          >
-            ← Back to Welcome
-          </button>
-          <button
-            onClick={resetAndGoToSetup}
-            style={{ padding:'8px 12px', border:'1px solid #ddd', borderRadius:10, background:'#fef3c7' }}
-          >
-            Reset & Setup
-          </button>
-          <div style={{ border:'1px solid #eee', borderRadius:12, padding:'8px 12px', minWidth:260, background:'#fbfbff' }}>
-            <div style={{ fontWeight:700, marginBottom:6 }}>Account Overview</div>
-            <div style={{ fontSize:13, display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-              <div><div style={{ opacity:.6, fontSize:12 }}>Checking</div><div style={{ fontWeight:700 }}>${checking.toFixed(2)}</div></div>
-              <div><div style={{ opacity:.6, fontSize:12 }}>This Month Spend</div><div style={{ fontWeight:700 }}>${spendThis.toFixed(0)}</div></div>
-            </div>
+  // ...top of file unchanged
+
+return (
+  <main style={{ fontFamily:'ui-sans-serif, system-ui', padding:24, maxWidth:1240, margin:'0 auto' }}>
+    {/* Back link above title */}
+    <div style={{ fontSize: 13, marginBottom: 6 }}>
+      <a href="/welcome" style={{ color: '#4f46e5', textDecoration: 'none' }}>← Back to Welcome</a>
+    </div>
+
+    {/* header */}
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
+      <div>
+        <h1 style={{ fontSize:28, fontWeight:800, marginBottom:4 }}>Pranaya’s Money Tracker</h1>
+        <p style={{ opacity:.75, marginBottom:8 }}>
+          Add expenses, categorize spending & income, and budget at a glance with friendly charts and alerts.
+        </p>
+      </div>
+      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+        <button
+          onClick={resetAndGoToSetup}
+          style={{ padding:'8px 12px', border:'1px solid #ddd', borderRadius:10, background:'#fef3c7' }}
+        >
+          Reset & Setup
+        </button>
+        <div style={{ border:'1px solid #eee', borderRadius:12, padding:'8px 12px', minWidth:260, background:'#fbfbff' }}>
+          <div style={{ fontWeight:700, marginBottom:6 }}>Account Overview</div>
+          <div style={{ fontSize:13, display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+            <div><div style={{ opacity:.6, fontSize:12 }}>Checking</div><div style={{ fontWeight:700 }}>${checking.toFixed(2)}</div></div>
+            <div><div style={{ opacity:.6, fontSize:12 }}>This Month Spend</div><div style={{ fontWeight:700 }}>${spendThis.toFixed(0)}</div></div>
           </div>
         </div>
       </div>
+    </div>
+
+    {/* ...rest of tracker code unchanged */}
+
 
       {flash && <div style={{ marginTop:12, marginBottom:8, padding:'8px 12px', border:'1px solid #d1fadf', background:'#f0fff4', borderRadius:10 }}>{flash}</div>}
 
@@ -272,8 +273,8 @@ export default function Tracker() {
               </div>
             </>
           )}
-          <div style={{ marginTop:'auto', fontSize:12, color:'#6b7280' }}>💡 tip: to add expense, press on the <strong>Add expense</strong> filter.</div>
-          <div style={{ marginTop:4, fontSize:12, color:'#6b7280' }}>🌈 {vibe}</div>
+          <div style={{ marginTop:'auto', fontSize:12, color:'#6b7280' }}> tip: to add expense, press on the <strong>Add expense</strong> filter.</div>
+          <div style={{ marginTop:4, fontSize:12, color:'#6b7280' }}> {vibe}</div>
         </div>
 
         {/* Alerts */}

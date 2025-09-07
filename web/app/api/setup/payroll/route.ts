@@ -1,6 +1,6 @@
-export const runtime = 'nodejs';
-import { NextResponse } from "next/server";
-import { db } from "../../../../lib/store";
+import { NextResponse } from 'next/server';
+import { db } from '../../../../lib/store';
+
 export async function POST(req: Request) {
   const { amount } = await req.json();
   db.prefs.payroll = Number(amount) || 0;

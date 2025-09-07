@@ -37,13 +37,24 @@ export function setChecking(bal: number) {
   if (a) a.balance = bal;
 }
 
+export function resetAll() {
+  db.accounts = [
+    { id: "acc_checking", name: "Checking", type: "depository", balance: 0 },
+    { id: "acc_savings",  name: "Savings",  type: "depository", balance: 0 },
+  ];
+  db.transactions = [];
+  db.expenses = [];
+  db.categories = ["Rent","Groceries","Entertainment","Subscriptions","Health","Income"];
+  db.alerts = [];
+  db.prefs = {};
+}
+
 export function addTxn(t: Omit<Txn,"id"|"account_id"> & { account_id?: string }) {
   const id = uid("txn");
   const account_id = t.account_id ?? "acc_checking";
   const txn: Txn = { id, account_id, name: t.name, amount: t.amount, date: t.date, category: t.category };
   db.transactions.unshift(txn);
 
-  // mutate checking balance for deposit/withdraw
   const checking = db.accounts.find(a => a.id === "acc_checking");
   if (checking) checking.balance += t.amount;
 
