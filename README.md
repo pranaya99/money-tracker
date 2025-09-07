@@ -26,7 +26,7 @@ docker compose up --build
 *Works offline with mock data - no external dependencies required*
 
 
-## 🏗 Architecture
+##  Architecture
 
 ```
 ├── api/           # Go 1.22 REST API (in-memory data store)
