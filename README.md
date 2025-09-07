@@ -3,13 +3,13 @@
 
 A Plaid-inspired expense tracking application demonstrating production-ready architecture with microservices, real-time updates, and intuitive UX design.
 
-## 🎯 Why This Matters
+## Why This Matters
 - **Modern Stack**: Go backend + Next.js 14 (TypeScript) frontend + Docker orchestration
 - **Fintech Focus**: Balance tracking, autopay simulation, spending analytics, and user alerts
 - **Production Patterns**: REST API design, containerized services, environment configuration
 - **Full-Stack Ownership**: End-to-end feature delivery from database to UI
 
-## 🚀 Quick Start
+## Quick Start
 **Prerequisites**: Docker Desktop installed
 
 ```bash
@@ -19,14 +19,14 @@ docker compose up --build
 ```
 
 **URLs:**
-- 🏠 App: http://localhost:3000
-- 📊 Dashboard: http://localhost:3000/tracker  
-- 🔧 API: http://localhost:8080
+-  App: http://localhost:3000
+-  Dashboard: http://localhost:3000/tracker  
+-  API: http://localhost:8080
 
 *Works offline with mock data - no external dependencies required*
 
 
-## 🏗️ Architecture
+## 🏗 Architecture
 
 ```
 ├── api/           # Go 1.22 REST API (in-memory data store)
@@ -45,14 +45,14 @@ docker compose up --build
 - `/welcome` - Onboarding flow with required setup
 - `/tracker` - Main dashboard with charts and transaction history
 
-## 🔧 Configuration
+##  Configuration
 
 ```bash
 # Optional environment variables
 NEXT_PUBLIC_API_BASE=http://localhost:8080  # API endpoint
 ```
 
-## 🛠️ Development
+##  Development
 
 **Local Development:**
 ```bash
@@ -69,7 +69,7 @@ docker compose -f docker-compose.prod.yml up --build
 ```
 
 
-## 📋 Tech Stack
+##  Tech Stack
 - **Backend**: Go 1.22, Gorilla Mux, JSON APIs
 - **Frontend**: Next.js 14, TypeScript, Tailwind CSS, Recharts
 - **Infrastructure**: Docker, Docker Compose
