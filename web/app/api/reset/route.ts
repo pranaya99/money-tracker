@@ -1,6 +1,5 @@
-// web/app/api/reset/route.ts
 import { NextResponse } from 'next/server';
-import { resetAll } from '../../../lib/store'; // ✅ correct depth from app/api/reset/route.ts
+import { resetAll } from '../../../lib/store';
 
 export async function POST() {
   resetAll();
