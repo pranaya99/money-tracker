@@ -1,0 +1,66 @@
+# --- OS / Editor ---
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.code-workspace
+
+# --- Env & Secrets (keep example files) ---
+.env
+.env.*
+!.env.example
+web/.env.local
+web/.env.*
+!web/.env.example
+
+# --- Node / Next.js (web/) ---
+node_modules/
+.next/
+out/
+dist/
+coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Go (api/) ---
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.a
+api/bin/
+bin/
+api/server
+api/coverage.*
+coverage.out
+
+# --- Python (worker/) ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+*.coverage
+.eggs/
+build/
+dist/
+.venv/
+venv/
+pip-wheel-metadata/
+.mypy_cache/
+.pytest_cache/
+coverage.xml
+htmlcov/
+
+# --- Docker / local data ---
+*.pid
+tmp/
+data/
