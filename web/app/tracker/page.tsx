@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-const API = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+const API = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
 type Account = { id: string; name: string; type: string; balance: number };
 type Txn = { id: string; account_id: string; name: string; amount: number; date: string; category?: string };
@@ -296,7 +296,7 @@ export default function Tracker() {
           )}
 
           <div style={{ marginTop:'auto', fontSize:12, color:'#6b7280' }}>
-            💡 tip: to add expense, press on the <strong>Add expense</strong> filter.
+            tip: to add expense, press on the <strong>Add expense</strong> filter.
           </div>
           <div style={{ marginTop:4, fontSize:12, color:'#6b7280' }}>
             {vibe}

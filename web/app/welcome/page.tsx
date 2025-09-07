@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, useAnimationControls } from 'framer-motion';
 
-const API = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+const API = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
 function toNumber(v: string) {
   const n = parseFloat((v || '').replace(/[^0-9.-]/g, ''));
