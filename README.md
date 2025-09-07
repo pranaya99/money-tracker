@@ -25,19 +25,6 @@ docker compose up --build
 
 *Works offline with mock data - no external dependencies required*
 
-## ✨ Features Built
-
-### Core Functionality
-- **Account Setup**: Required onboarding flow with balance/income validation
-- **Bank Connection**: Mock Plaid-style account linking with seed data
-- **Expense Tracking**: Add transactions with categories and automatic balance updates
-- **Autopay Simulation**: Rent payments and payroll deposits with alerts
-
-### User Experience
-- **Real-time Updates**: Instant balance and transaction updates
-- **Visual Analytics**: Category spending breakdown with dynamic pie charts
-- **Smart Alerts**: Spending notifications and account activity updates
-- **Responsive Design**: Mobile-first UI with smooth animations
 
 ## 🏗️ Architecture
 
@@ -81,12 +68,6 @@ cd web && npm run dev
 docker compose -f docker-compose.prod.yml up --build
 ```
 
-## 🚀 What's Next
-- Integrate real Plaid Link SDK for live bank connections
-- Add PostgreSQL persistence with migrations
-- Implement user authentication and session management
-- Add comprehensive test coverage (unit + e2e)
-- Deploy to AWS/GCP with CI/CD pipeline
 
 ## 📋 Tech Stack
 - **Backend**: Go 1.22, Gorilla Mux, JSON APIs
