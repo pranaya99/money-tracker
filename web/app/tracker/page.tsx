@@ -1,231 +1,146 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 
-const API = process.env.NEXT_PUBLIC_API_BASE ?? "";
-
-type Account = { id: string; name: string; type: string; balance: number };
-type Txn = { id: string; account_id: string; name: string; amount: number; date: string; category?: string };
-type Alert = { id: string; txn_id: string; kind: string; message: string; severity: 'low'|'medium'|'high'; amount: number; balance: number; created_at: string };
+type Txn = { id: string; name: string; amount: number; date: string; category?: string };
 type Expense = { id: string; name: string; category: string; amount: number; date: string };
+type Alert = { id: string; kind: string; message: string; created_at: string };
 
-function todayStr() { return new Date().toISOString().slice(0,10); }
-function monthKey(d: Date) { return `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2,'0')}`; }
-
-function prettyKind(kind: string) {
-  const map: Record<string,string> = {
-    rent_due_soon: 'Rent Due Soon',
-    payroll_incoming: 'Payroll Incoming',
-    spend_up_month_over_month: 'Spending Up vs Last Month',
-    payroll_posted: 'Payroll Posted',
-    rent_paid: 'Rent Paid',
-  };
-  return map[kind] || kind.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
+type DB = {
+  base: { checking: number };
+  txns: Txn[];
+  expenses: Expense[];
+  alerts: Alert[];
+  categories: string[];
+  prefs: { rent: number; payroll: number };
+  connected: boolean;
+};
 
 const PALETTE = ['#6366F1','#22C55E','#F59E0B','#EF4444','#06B6D4','#A855F7','#F97316','#84CC16','#10B981','#3B82F6'];
-const CARD_H = 520;
+const uid = (p='id') => `${p}_${Math.random().toString(36).slice(2,9)}${Date.now().toString(36).slice(-4)}`;
+const today = () => new Date().toISOString().slice(0,10);
+const monthKey = (d: Date) => `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2,'0')}`;
+const label = (s:string) => s.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+const get = (): DB => JSON.parse(localStorage.getItem('budgetDB') || 'null');
+const put = (db: DB) => localStorage.setItem('budgetDB', JSON.stringify(db));
+const addAlert = (db: DB, kind: string, msg: string) => db.alerts.unshift({ id: uid('al'), kind, message: msg, created_at: new Date().toISOString() });
 
-function fireConfetti() {
-  const canvas = document.createElement('canvas');
-  canvas.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:9999';
-  document.body.appendChild(canvas);
-  const ctx = canvas.getContext('2d')!;
-  const dpr = window.devicePixelRatio || 1;
-  const resize = () => { canvas.width = innerWidth*dpr; canvas.height = innerHeight*dpr; };
-  resize(); addEventListener('resize', resize);
-  const N = 160, parts = Array.from({length:N},(_,i)=>({
-    x: Math.random()*canvas.width, y: -Math.random()*canvas.height*0.2,
-    r: (6+Math.random()*6)*dpr, vx: (-1+Math.random()*2)*0.8*dpr,
-    vy: (1+Math.random()*2)*dpr, color: PALETTE[i%PALETTE.length], a: 1
-  }));
-  const t0 = performance.now();
-  const draw = (t:number)=>{
-    const dt=(t-t0)/1200;
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    parts.forEach(p=>{
-      p.x+=p.vx; p.y+=p.vy; p.vy+=0.04*dpr; p.a = Math.max(0, 1-dt);
-      ctx.globalAlpha=p.a; ctx.fillStyle=p.color;
-      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
-    });
-    if(dt<1){ requestAnimationFrame(draw); } else { removeEventListener('resize', resize); canvas.remove(); }
-  };
-  requestAnimationFrame(draw);
-}
+function hashColorIndex(s: string, n: number) { let h=0; for (let i=0;i<s.length;i++) h=((h<<5)-h)+s.charCodeAt(i); return Math.abs(h)%n; }
+function fireConfetti(){ const c=document.createElement('canvas'); c.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:9999'; document.body.appendChild(c);
+  const x=c.getContext('2d')!,dpr=window.devicePixelRatio||1; const rs=()=>{c.width=innerWidth*dpr;c.height=innerHeight*dpr}; rs(); addEventListener('resize',rs);
+  const N=140, parts=Array.from({length:N},(_,i)=>({x:Math.random()*c.width,y:-Math.random()*c.height*.2,r:(6+Math.random()*6)*dpr,vx:(-1+Math.random()*2)*.8*dpr,vy:(1+Math.random()*2)*dpr,color:PALETTE[i%PALETTE.length],a:1}));
+  const t0=performance.now(); const draw=(t:number)=>{const dt=(t-t0)/1200; x.clearRect(0,0,c.width,c.height); parts.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=0.04*dpr;p.a=Math.max(0,1-dt);x.globalAlpha=p.a;x.fillStyle=p.color;x.beginPath();x.arc(p.x,p.y,p.r,0,6.283);x.fill();}); if(dt<1) requestAnimationFrame(draw); else {removeEventListener('resize',rs); c.remove();}}; requestAnimationFrame(draw); }
 
 export default function Tracker() {
-  const router = useRouter();
-
-  const [connected, setConnected] = useState(false);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [txns, setTxns] = useState<Txn[]>([]);
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [flash, setFlash] = useState<string>('');
-
-  // Required values from /welcome
-  const [checkingOverride, setCheckingOverride] = useState<number | null>(null);
-  const [rentPref, setRentPref] = useState<number | null>(null);
-  const [payrollPref, setPayrollPref] = useState<number | null>(null);
-
-  // enforce setup
-  useEffect(() => {
-    const ic = localStorage.getItem('initialChecking');
-    const r  = localStorage.getItem('monthlyRent');
-    const p  = localStorage.getItem('payrollAmount');
-
-    if (!ic || !r || !p) {
-      router.push('/welcome'); // compulsory setup
-      return;
-    }
-    setCheckingOverride(parseFloat(ic));
-    setRentPref(parseFloat(r));
-    setPayrollPref(parseFloat(p));
-  }, [router]);
+  const [db, setDB] = useState<DB | null>(null);
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ name: '', category: '', amount: '', date: today() });
+  const [flash, setFlash] = useState('');
 
   // vibes
-  const vibes = useRef([
-    "you're building great money habits ✨",
-    "little steps today is big wins later 💪",
-    "track it to tame it 💸",
-    "proud of you for checking in 🌱",
-    "consistency is better than intensity keep going 🚀",
-  ]);
+  const vibes = useRef(["you're building great money habits ✨", "little steps today = big wins later 💪", "track it to tame it 💸", "proud of you for checking in 🌱"]);
   const [vibe, setVibe] = useState(vibes.current[0]);
+  useEffect(()=>{ const id=setInterval(()=> setVibe(v=> vibes.current[(vibes.current.indexOf(v)+1)%vibes.current.length]), 8000); return ()=>clearInterval(id); },[]);
+
   useEffect(() => {
-    const id = setInterval(() => {
-      setVibe(v => {
-        const idx = (vibes.current.indexOf(v)+1) % vibes.current.length;
-        return vibes.current[idx];
-      });
-    }, 8000);
-    return () => clearInterval(id);
+    const loaded = get();
+    if (!loaded) { window.location.href = '/welcome'; return; }
+    setDB(loaded);
   }, []);
 
-  // data
-  async function fetchBalances(){ const r=await fetch(`${API}/api/balances`); setAccounts((await r.json()).accounts||[]); }
-  async function fetchTxns(){ const r=await fetch(`${API}/api/transactions`); const j=await r.json(); setTxns((j.transactions||[]).sort((a:Txn,b:Txn)=> b.id.localeCompare(a.id))); }
-  async function fetchAlerts(){ const r=await fetch(`${API}/api/alerts`); const j=await r.json(); setAlerts((j.alerts||[]).sort((a:Alert,b:Alert)=> (b.created_at||'').localeCompare(a.created_at||''))); }
-  async function fetchExpenses(){ const r=await fetch(`${API}/api/expenses`); const j=await r.json(); setExpenses((j.expenses||[]).sort((a:Expense,b:Expense)=> (b.date||'').localeCompare(a.date||''))); }
-  async function fetchCategories(){ const r=await fetch(`${API}/api/categories`); const j=await r.json(); setCategories((j.categories||[]).sort()); }
-  async function refreshAll(){ await Promise.all([fetchBalances(),fetchTxns(),fetchAlerts(),fetchExpenses(),fetchCategories()]); }
+  // derived values
+  const checking = useMemo(() => {
+    if (!db) return 0;
+    const sum = db.txns.reduce((a,t)=>a+t.amount, 0);
+    return db.base.checking + sum;
+  }, [db]);
 
-  useEffect(()=>{ refreshAll(); },[]);
+  const thisMonthSpend = useMemo(() => {
+    if (!db) return 0;
+    const now = new Date(); const key = monthKey(now);
+    let s = 0;
+    db.expenses.forEach(e => { if (monthKey(new Date(e.date)) === key) s += Math.abs(e.amount); });
+    return s;
+  }, [db]);
 
-  async function connectBank(){
-    setLoading(true);
-    try { await fetch(`${API}/api/public_token/exchange`,{method:'POST'}); setConnected(true); await refreshAll(); }
-    finally { setLoading(false); }
-  }
+  const byCat = useMemo(() => {
+    if (!db) return { total: 0, entries: [] as [string,number][] };
+    const map = new Map<string, number>();
+    db.expenses.forEach(e => map.set(e.category, (map.get(e.category)||0) + Math.abs(e.amount)));
+    const total = Array.from(map.values()).reduce((a,b)=>a+b,0);
+    const entries = Array.from(map.entries()).sort((a,b)=>b[1]-a[1]);
+    return { total, entries };
+  }, [db]);
 
-  async function markRentPaid() {
-    if (rentPref == null) return router.push('/welcome');
-    setLoading(true);
-    try {
-      await fetch(`${API}/api/autopay/rent`, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ date: todayStr(), amount: rentPref })
-      });
-      setCheckingOverride(v => {
-        const base = (typeof v === 'number') ? v : (accounts.find(a=>a.name==='Checking')?.balance ?? 0);
-        return base - rentPref;
-      });
-      await refreshAll();
-      setFlash(`Rent recorded (-$${rentPref.toFixed(0)}). 💸`); setTimeout(()=>setFlash(""), 1600);
-      fireConfetti();
-    } finally { setLoading(false); }
-  }
-
-  async function markPayrollDeposited() {
-    if (payrollPref == null) return router.push('/welcome');
-    setLoading(true);
-    try {
-      await fetch(`${API}/api/autopay/payroll`, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ date: todayStr(), amount: payrollPref })
-      });
-      setCheckingOverride(v => {
-        const base = (typeof v === 'number') ? v : (accounts.find(a=>a.name==='Checking')?.balance ?? 0);
-        return base + payrollPref;
-      });
-      await refreshAll();
-      setFlash(`Payroll deposited (+$${payrollPref.toFixed(0)}). ✅`); setTimeout(()=>setFlash(""), 1600);
-    } finally { setLoading(false); }
-  }
-
-  // add expense
-  const [openForm, setOpenForm] = useState(false);
-  const [form, setForm] = useState({ name: '', category: '', amount: '', date: todayStr() });
-
-  async function submitExpense(e: React.FormEvent){
-    e.preventDefault();
-    const amt = parseFloat(form.amount||'0');
+  function addExpenseLocal() {
+    if (!db) return;
+    const amt = Number(form.amount);
     const cat = (form.category||'').trim() || 'Other';
-    if(!form.name || isNaN(amt) || amt<=0) return;
-    await fetch(`${API}/api/expenses`,{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({name:form.name, category:cat, amount:amt, date:form.date})
-    });
-    await fetch(`${API}/api/categories`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:cat}) }).catch(()=>{});
-    setOpenForm(false);
-    setForm({ name:'', category:'', amount:'', date: todayStr() });
-    await refreshAll();
-    setFlash("Expense logged! 🎉"); setTimeout(()=>setFlash(""), 1800);
+    if (!form.name || !(amt>0)) return;
+
+    const nd = { ...db };
+    const e: Expense = { id: uid('exp'), name: form.name, category: cat, amount: amt, date: form.date };
+    nd.expenses.unshift(e);
+
+    // mirror to txns (debit)
+    nd.txns.unshift({ id: uid('txn'), name: e.name, amount: -Math.abs(e.amount), date: e.date, category: e.category });
+
+    if (!nd.categories.includes(cat)) nd.categories.push(cat);
+    put(nd); setDB(nd);
+    setOpen(false); setForm({ name:'', category:'', amount:'', date: today() });
+    setFlash('Expense logged! 🎉'); setTimeout(()=>setFlash(''),1500);
     fireConfetti();
   }
 
-  // KPIs
-  const now = new Date();
-  const thisKey = monthKey(now);
-  const spendThis = useMemo(()=>{
-    let sum = 0;
-    for(const e of expenses){
-      const d = new Date(e.date);
-      if (monthKey(d) === thisKey) sum += Math.abs(e.amount);
-    }
-    return sum;
-  },[expenses, thisKey]);
+  function rentPaid() {
+    if (!db) return;
+    const nd = { ...db };
+    const amt = Math.abs(nd.prefs.rent || 0);
+    const date = today();
+    nd.txns.unshift({ id: uid('txn'), name: 'Rent', amount: -amt, date, category: 'Rent' });
+    addAlert(nd, 'rent_paid', `Rent paid (-$${amt.toFixed(0)})`);
+    put(nd); setDB(nd);
+    setFlash('Rent recorded. 💸'); setTimeout(()=>setFlash(''),1200);
+    fireConfetti();
+  }
 
-  const checkingActual = accounts.find(a=>a.name==='Checking')?.balance ?? 0;
-  const checking = (typeof checkingOverride === 'number') ? checkingOverride : checkingActual;
+  function payrollDeposited() {
+    if (!db) return;
+    const nd = { ...db };
+    const amt = Math.abs(nd.prefs.payroll || 0);
+    const date = today();
+    nd.txns.unshift({ id: uid('txn'), name: 'Payroll', amount: amt, date, category: 'Income' });
+    addAlert(nd, 'payroll_posted', `Payroll deposited (+$${amt.toFixed(0)})`);
+    put(nd); setDB(nd);
+    setFlash('Payroll deposited. ✅'); setTimeout(()=>setFlash(''),1200);
+  }
 
-  // spend by category
-  const byCat = useMemo(()=>{
-    const map = new Map<string, number>();
-    for(const e of expenses) map.set(e.category, (map.get(e.category)||0) + Math.abs(e.amount));
-    const total = Array.from(map.values()).reduce((a,b)=>a+b,0);
-    const entries = Array.from(map.entries()).sort((a,b)=>b[1]-a[1]);
-    return { entries, total };
-  },[expenses]);
+  function connect() {
+    if (!db) return;
+    const nd = { ...db, connected: true }; put(nd); setDB(nd);
+  }
 
-  const colorMap = useMemo(() => {
-    const m: Record<string, string> = {};
-    byCat.entries.forEach(([label], idx) => { m[label] = PALETTE[idx % PALETTE.length]; });
-    return m;
-  }, [byCat.entries]);
+  if (!db) return null;
 
-  function donutPaths(entries: [string,number][], total: number, colors: Record<string,string>){
-    const paths: {d:string; label:string; value:number; color:string}[] = [];
-    if(total<=0) return paths;
+  // donut paths
+  const donut = (() => {
+    const paths: { d: string; label: string; value: number; color: string }[] = [];
+    const total = byCat.total; if (total <= 0) return paths;
     const cx=70, cy=70, r=58; let start=-Math.PI/2;
-    for(const [label, val] of entries){
-      const frac = val/total; const a = frac * Math.PI*2; const end = start + a;
-      const x1=cx+r*Math.cos(start), y1=cy+r*Math.sin(start);
-      const x2=cx+r*Math.cos(end),   y2=cy+r*Math.sin(end);
-      const large = a>Math.PI?1:0;
+    for (const [label, val] of byCat.entries) {
+      const frac = val / total; const a = frac * Math.PI * 2; const end = start + a;
+      const x1 = cx + r * Math.cos(start), y1 = cy + r * Math.sin(start);
+      const x2 = cx + r * Math.cos(end),   y2 = cy + r * Math.sin(end);
+      const large = a > Math.PI ? 1 : 0;
       const d = `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`;
-      paths.push({ d, label, value: val, color: colors[label] });
-      start=end;
+      paths.push({ d, label, value: val, color: PALETTE[hashColorIndex(label, PALETTE.length)] });
+      start = end;
     }
     return paths;
-  }
-  const donut = donutPaths(byCat.entries, byCat.total, colorMap);
+  })();
 
   return (
-    <main style={{ fontFamily:'ui-sans-serif, system-ui', padding:24, maxWidth:1240, margin:'0 auto' }}>
+    <main style={{ fontFamily:'ui-sans-serif,system-ui', padding:24, maxWidth:1240, margin:'0 auto' }}>
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
         <div>
           <h1 style={{ fontSize:28, fontWeight:800, marginBottom:4 }}>Pranaya’s Money Tracker</h1>
@@ -237,7 +152,7 @@ export default function Tracker() {
           <div style={{ fontWeight:700, marginBottom:6 }}>Account Overview</div>
           <div style={{ fontSize:13, display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
             <div><div style={{ opacity:.6, fontSize:12 }}>Checking</div><div style={{ fontWeight:700 }}>${checking.toFixed(2)}</div></div>
-            <div><div style={{ opacity:.6, fontSize:12 }}>This Month Spend</div><div style={{ fontWeight:700 }}>${spendThis.toFixed(0)}</div></div>
+            <div><div style={{ opacity:.6, fontSize:12 }}>This Month Spend</div><div style={{ fontWeight:700 }}>${thisMonthSpend.toFixed(0)}</div></div>
           </div>
         </div>
       </div>
@@ -245,81 +160,68 @@ export default function Tracker() {
       {flash && <div style={{ marginTop:12, marginBottom:8, padding:'8px 12px', border:'1px solid #d1fadf', background:'#f0fff4', borderRadius:10 }}>{flash}</div>}
 
       <div style={{ display:'flex', gap:12, marginBottom:16, flexWrap:'wrap' }}>
-        <button onClick={connectBank} disabled={loading || connected}
-          style={{ padding:'10px 14px', borderRadius:10, border:'1px solid #ddd', background: connected?'#e8f5e9':'white', cursor: connected?'default':'pointer' }}>
-          {connected ? 'Connected' : 'Connect bank'}
+        <button onClick={connect} disabled={db.connected} style={{ padding:'10px 14px', borderRadius:10, border:'1px solid #ddd', background: db.connected?'#e8f5e9':'white' }}>
+          {db.connected ? 'Connected' : 'Connect bank'}
         </button>
-
-        <button onClick={markRentPaid} disabled={loading} style={{ padding:'10px 14px', borderRadius:10, border:'1px solid #ddd', background:'#fff' }}>
-          Rent paid
-        </button>
-        <button onClick={markPayrollDeposited} disabled={loading} style={{ padding:'10px 14px', borderRadius:10, border:'1px solid #ddd', background:'#fff' }}>
-          Payroll deposited
-        </button>
-
-        <button onClick={()=>setOpenForm(true)} style={{ padding:'10px 14px', borderRadius:10, border:'1px solid #ddd', background:'#f7f7ff' }}>
-          + Add expense
-        </button>
+        <button onClick={rentPaid} style={{ padding:'10px 14px', borderRadius:10, border:'1px solid #ddd', background:'#fff' }}>Rent paid</button>
+        <button onClick={payrollDeposited} style={{ padding:'10px 14px', borderRadius:10, border:'1px solid #ddd', background:'#fff' }}>Payroll deposited</button>
+        <button onClick={()=>setOpen(true)} style={{ padding:'10px 14px', borderRadius:10, border:'1px solid #ddd', background:'#f7f7ff' }}>+ Add expense</button>
       </div>
 
       <section style={{ display:'grid', gridTemplateColumns:'1fr 1fr minmax(480px,1.6fr)', gap:16 }}>
         {/* Spend */}
-        <div style={{ border:'1px solid #eee', borderRadius:12, padding:16, height:CARD_H, display:'flex', flexDirection:'column' }}>
+        <div style={{ border:'1px solid #eee', borderRadius:12, padding:16, height:520, display:'flex', flexDirection:'column' }}>
           <h2 style={{ fontSize:18, fontWeight:700, marginBottom:8 }}>Spend by Category</h2>
-
           {byCat.total === 0 ? (
             <div style={{ opacity:.7, fontSize:13, textAlign:'center', marginTop:40 }}>No expenses yet. Add one to see a chart.</div>
           ) : (
             <>
               <div style={{ display:'flex', justifyContent:'center', alignItems:'center', marginTop:4 }}>
                 <svg width="180" height="180" viewBox="0 0 140 140">
-                  {donut.map((p, i) => <path key={i} d={p.d} fill={p.color} opacity={0.95} />)}
+                  {donut.map((p,i)=> <path key={i} d={p.d} fill={p.color} opacity={0.95} />)}
                   <circle cx="70" cy="70" r="38" fill="#fff" />
                   <text x="70" y="70" textAnchor="middle" dominantBaseline="central" fontSize="13" fill="#111">
                     ${byCat.total.toFixed(0)}
                   </text>
                 </svg>
               </div>
-
               <div style={{ marginTop:10, marginInline:'auto', width:'100%', maxWidth:320, display:'grid', rowGap:10 }}>
-                {byCat.entries.map(([label, val]) => (
-                  <div key={label} style={{ display:'grid', gridTemplateColumns:'1fr auto', alignItems:'center', columnGap:16 }}>
-                    <div style={{ display:'flex', alignItems:'center', gap:8, minWidth:0 }}>
-                      <span style={{ width:12, height:12, background:colorMap[label], borderRadius:3, display:'inline-block' }} />
-                      <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{label}</span>
+                {byCat.entries.map(([lab,val])=>{
+                  const color = PALETTE[hashColorIndex(lab, PALETTE.length)];
+                  return (
+                    <div key={lab} style={{ display:'grid', gridTemplateColumns:'1fr auto', alignItems:'center', columnGap:16 }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:8, minWidth:0 }}>
+                        <span style={{ width:12, height:12, borderRadius:3, background:color, display:'inline-block' }} />
+                        <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{lab}</span>
+                      </div>
+                      <div style={{ whiteSpace:'nowrap', textAlign:'right' }}>${val.toFixed(0)}</div>
                     </div>
-                    <div style={{ textAlign:'right', whiteSpace:'nowrap' }}>${val.toFixed(0)}</div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </>
           )}
-
-          <div style={{ marginTop:'auto', fontSize:12, color:'#6b7280' }}>
-            tip: to add expense, press on the <strong>Add expense</strong> filter.
-          </div>
-          <div style={{ marginTop:4, fontSize:12, color:'#6b7280' }}>
-            {vibe}
-          </div>
+          <div style={{ marginTop:'auto', fontSize:12, color:'#6b7280' }}>💡 tip: to add expense, press on the <strong>Add expense</strong> filter.</div>
+          <div style={{ marginTop:4, fontSize:12, color:'#6b7280' }}>🌈 {vibe}</div>
         </div>
 
         {/* Alerts */}
-        <div style={{ border:'1px solid #eee', borderRadius:12, padding:16, height:CARD_H, display:'flex', flexDirection:'column' }}>
+        <div style={{ border:'1px solid #eee', borderRadius:12, padding:16, height:520, display:'flex', flexDirection:'column' }}>
           <h2 style={{ fontSize:18, fontWeight:700, marginBottom:8 }}>Alerts</h2>
           <ul style={{ display:'grid', gap:10, overflowY:'auto', paddingRight:6, maxHeight:'100%' }}>
-            {alerts.map((al)=>(
-              <li key={al.id} style={{ padding:12, background:'#fafafa', borderRadius:10, border:'1px solid #eee' }}>
-                <div style={{ fontWeight:700, marginBottom:4 }}>{prettyKind(al.kind)}</div>
-                <div style={{ fontSize:14, marginBottom:4 }}>{al.message}</div>
-                <div style={{ fontSize:12, opacity:.7 }}>Detected: {al.created_at ? new Date(al.created_at).toLocaleString() : ''}</div>
+            {db.alerts.length===0 && <li style={{ opacity:.6 }}>No alerts yet.</li>}
+            {db.alerts.map(a=>(
+              <li key={a.id} style={{ padding:12, background:'#fafafa', borderRadius:10, border:'1px solid #eee' }}>
+                <div style={{ fontWeight:700, marginBottom:4 }}>{label(a.kind)}</div>
+                <div style={{ fontSize:14, marginBottom:4 }}>{a.message}</div>
+                <div style={{ fontSize:12, opacity:.7 }}>Detected: {new Date(a.created_at).toLocaleString()}</div>
               </li>
             ))}
-            {alerts.length===0 && <li style={{ opacity:.6 }}>No alerts yet.</li>}
           </ul>
         </div>
 
         {/* Transactions */}
-        <div style={{ border:'1px solid #eee', borderRadius:12, padding:16, height:CARD_H, display:'flex', flexDirection:'column' }}>
+        <div style={{ border:'1px solid #eee', borderRadius:12, padding:16, height:520, display:'flex', flexDirection:'column' }}>
           <h2 style={{ fontSize:18, fontWeight:700, marginBottom:8 }}>Transactions</h2>
           <div style={{ overflowY:'auto', paddingRight:6 }}>
             <table style={{ width:'100%', borderCollapse:'separate', borderSpacing:0, tableLayout:'fixed' }}>
@@ -336,68 +238,52 @@ export default function Tracker() {
                 </tr>
               </thead>
               <tbody>
-                {txns.map(txn=>(
-                  <tr key={txn.id} style={{ verticalAlign:'top' }}>
-                    <td style={{ padding:'10px 0', paddingRight:18, borderBottom:'1px dashed #f3f3f3', whiteSpace:'nowrap' }}>{txn.date}</td>
+                {db.txns.length===0 && <tr><td colSpan={3} style={{ opacity:.6, padding:'12px 0' }}>No transactions yet.</td></tr>}
+                {db.txns.map(t=>(
+                  <tr key={t.id} style={{ verticalAlign:'top' }}>
+                    <td style={{ padding:'10px 0', paddingRight:18, borderBottom:'1px dashed #f3f3f3', whiteSpace:'nowrap' }}>{t.date}</td>
                     <td style={{ padding:'10px 0', borderBottom:'1px dashed #f3f3f3' }}>
-                      <div title={`${txn.name}${txn.category ? ' • '+txn.category : ''}`}
-                           style={{ display:'flex', flexWrap:'wrap', alignItems:'center', gap:10, minWidth:0 }}>
-                        <span style={{ fontWeight:600, wordBreak:'break-word' }}>
-                          {txn.name}
-                        </span>
-                        {txn.category && (
-                          <span style={{ fontSize:12, padding:'2px 8px', borderRadius:999, border:'1px solid #e5e7eb', background:'#f8fafc', whiteSpace:'nowrap' }}>
-                            {txn.category}
-                          </span>
-                        )}
+                      <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+                        <span style={{ fontWeight:600, wordBreak:'break-word' }}>{t.name}</span>
+                        {t.category && <span style={{ fontSize:12, padding:'2px 8px', borderRadius:999, border:'1px solid #e5e7eb', background:'#f8fafc', whiteSpace:'nowrap' }}>{t.category}</span>}
                       </div>
                     </td>
                     <td style={{ padding:'10px 0', paddingLeft:18, borderBottom:'1px dashed #f3f3f3', textAlign:'right', whiteSpace:'nowrap' }}>
-                      {txn.amount<0?'-':''}${Math.abs(txn.amount).toFixed(2)}
+                      {t.amount<0?'-':''}${Math.abs(t.amount).toFixed(2)}
                     </td>
                   </tr>
                 ))}
-                {txns.length===0 && <tr><td colSpan={3} style={{ opacity:.6, padding:'12px 0' }}>No transactions yet.</td></tr>}
               </tbody>
             </table>
           </div>
         </div>
       </section>
 
-      {/* Modal: Add Expense */}
-      {openForm && (
+      {/* Add Expense modal */}
+      {open && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.2)', display:'flex', alignItems:'center', justifyContent:'center' }}>
-          <form onSubmit={submitExpense} style={{ background:'#fff', padding:20, borderRadius:12, minWidth:340, border:'1px solid #eee' }}>
+          <form onSubmit={(e)=>{e.preventDefault(); addExpenseLocal();}} style={{ background:'#fff', padding:20, borderRadius:12, minWidth:340, border:'1px solid #eee' }}>
             <h3 style={{ marginBottom:12, fontWeight:700 }}>Add Expense</h3>
             <div style={{ display:'grid', gap:10 }}>
               <label style={{ display:'grid', gap:6 }}>
                 <span style={{ fontSize:12, opacity:.8 }}>Name</span>
-                <input value={form.name} onChange={e=>setForm(f=>({...f, name:e.target.value}))}
-                  style={{ padding:8, border:'1px solid #ddd', borderRadius:8 }} required />
+                <input value={form.name} onChange={e=>setForm(f=>({...f, name:e.target.value}))} style={{ padding:8, border:'1px solid #ddd', borderRadius:8 }} required />
               </label>
               <label style={{ display:'grid', gap:6 }}>
                 <span style={{ fontSize:12, opacity:.8 }}>Category</span>
-                <input list="category-list" value={form.category} onChange={e=>setForm(f=>({...f, category:e.target.value}))}
-                  placeholder="e.g., Coffee, Subscriptions, Health"
-                  style={{ padding:8, border:'1px solid #ddd', borderRadius:8 }} />
-                <datalist id="category-list">
-                  {categories.map(c => <option key={c} value={c} />)}
-                </datalist>
+                <input value={form.category} onChange={e=>setForm(f=>({...f, category:e.target.value}))} placeholder="e.g., Coffee, Health" style={{ padding:8, border:'1px solid #ddd', borderRadius:8 }} />
               </label>
               <label style={{ display:'grid', gap:6 }}>
                 <span style={{ fontSize:12, opacity:.8 }}>Amount</span>
-                <input type="number" step="0.01" inputMode="decimal"
-                  value={form.amount} onChange={e=>setForm(f=>({...f, amount:e.target.value}))}
-                  style={{ padding:8, border:'1px solid #ddd', borderRadius:8 }} required />
+                <input type="number" step="0.01" inputMode="decimal" value={form.amount} onChange={e=>setForm(f=>({...f, amount:e.target.value}))} style={{ padding:8, border:'1px solid #ddd', borderRadius:8 }} required />
               </label>
               <label style={{ display:'grid', gap:6 }}>
                 <span style={{ fontSize:12, opacity:.8 }}>Date</span>
-                <input type="date" value={form.date} onChange={e=>setForm(f=>({...f, date:e.target.value}))}
-                  style={{ padding:8, border:'1px solid #ddd', borderRadius:8 }} required />
+                <input type="date" value={form.date} onChange={e=>setForm(f=>({...f, date:e.target.value}))} style={{ padding:8, border:'1px solid #ddd', borderRadius:8 }} required />
               </label>
             </div>
             <div style={{ display:'flex', gap:8, marginTop:14, justifyContent:'flex-end' }}>
-              <button type="button" onClick={()=>setOpenForm(false)} style={{ padding:'8px 12px', border:'1px solid #ddd', borderRadius:8, background:'#f7f7f7' }}>Cancel</button>
+              <button type="button" onClick={()=>setOpen(false)} style={{ padding:'8px 12px', border:'1px solid #ddd', borderRadius:8, background:'#f7f7f7' }}>Cancel</button>
               <button type="submit" style={{ padding:'8px 12px', border:'1px solid #ddd', borderRadius:8, background:'#e8f5e9' }}>Save</button>
             </div>
           </form>
