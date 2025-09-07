@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { initState, loadState } from '../../lib/clientStore';
+import { initState, loadState } from '../../lib/store';
 
 export default function Welcome() {
   const router = useRouter();
