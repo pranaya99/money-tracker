@@ -1,3 +1,4 @@
+export const runtime = 'nodejs';
 import { NextResponse } from "next/server";
 import { setChecking } from "../../../../lib/store";
 export async function POST(req: Request) {

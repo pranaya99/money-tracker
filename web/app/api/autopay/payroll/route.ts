@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { NextResponse } from "next/server";
 import { addAlert, addTxn, db } from "../../../../lib/store";
 export async function POST(req: Request) {
