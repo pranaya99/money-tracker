@@ -6,7 +6,7 @@
 [![Demo Link](./assets/thumbnail.png)](https://www.youtube.com/watch?v=bkEGmonaT6s "Demo Link")
 
 
-A Plaid-inspired expense tracking application demonstrating production-ready architecture with microservices, real-time updates, and intuitive UX design.
+A simple expense tracking application which helps me keep track of my expenses and budget according to the different categories I spend my money.
 
 ## Why This Matters
 - **Modern Stack**: Go backend + Next.js 14 (TypeScript) frontend + Docker orchestration
@@ -27,8 +27,6 @@ docker compose up --build
 -  App: http://localhost:3000
 -  Dashboard: http://localhost:3000/tracker  
 -  API: http://localhost:8080
-
-*Works offline with mock data - no external dependencies required*
 
 
 ##  Architecture
