@@ -3,7 +3,7 @@
 
 ## 🎥 Watch the Demo
 
-[![Watch the demo](./assets/thumbnail.png)](https://www.youtube.com/watch?v=bkEGmonaT6s "Watch the demo")
+[![Demo Link](./assets/thumbnail.png)](https://www.youtube.com/watch?v=bkEGmonaT6s "Demo Link")
 
 
 A Plaid-inspired expense tracking application demonstrating production-ready architecture with microservices, real-time updates, and intuitive UX design.
