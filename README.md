@@ -1,6 +1,11 @@
 # Budget Tracker
 *Full-stack fintech demo built with Go, Next.js, TypeScript & Docker*
 
+## 🎥 Watch the Demo
+
+[![Watch the demo](./assets/thumbnail.png)](https://www.youtube.com/watch?v=bkEGmonaT6s "Watch the demo")
+
+
 A Plaid-inspired expense tracking application demonstrating production-ready architecture with microservices, real-time updates, and intuitive UX design.
 
 ## Why This Matters
