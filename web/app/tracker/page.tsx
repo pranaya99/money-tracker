@@ -1,19 +1,21 @@
-// web/app/tracker/page.tsx
 'use client';
+
+export const dynamic = 'force-dynamic';
+
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  State, loadState, saveState,
-  addExpenseToState, markPayrollPostedInState, markRentPaidInState
-} from '../../lib/store';
 
-type Expense = State['expenses'][number];
-type Txn     = State['txns'][number];
-type Alert   = State['alerts'][number];
+// -------------- Types --------------
+type Account = { id: string; name: string; type: string; balance: number };
+type Txn = { id: string; account_id: string; name: string; amount: number; date: string; category?: string };
+type Alert = { id: string; txn_id?: string; kind: string; message: string; severity: 'low'|'medium'|'high'; amount?: number; balance?: number; created_at?: string };
+type Expense = { id: string; name: string; category: string; amount: number; date: string };
 
+// -------------- Utils --------------
 function todayStr() { return new Date().toISOString().slice(0,10); }
 function monthKey(d: Date) { return `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2,'0')}`; }
+
 function prettyKind(kind: string) {
   const map: Record<string,string> = {
     rent_due_soon: 'Rent Due Soon',
@@ -21,15 +23,25 @@ function prettyKind(kind: string) {
     spend_up_month_over_month: 'Spending Up vs Last Month',
     payroll_posted: 'Payroll Posted',
     rent_paid: 'Rent Paid',
-    expense_logged: 'Expense Logged',
   };
   return map[kind] || kind.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
-const PALETTE = ['#6366F1','#22C55E','#F59E0B','#EF4444','#06B6D4','#A855F7','#F97316','#84CC16','#10B981','#3B82F6'];
-function hashColorIndex(s: string, n: number) { let h=0; for (let i=0;i<s.length;i++) h=((h<<5)-h)+s.charCodeAt(i); return Math.abs(h)%n; }
+// Generate distinct colors by evenly spacing hues (unique and stable)
+function buildLabelColorMap(labels: string[]) {
+  const map = new Map<string, string>();
+  const n = Math.max(1, labels.length);
+  const sorted = [...labels].sort((a, b) => a.localeCompare(b)); // stabilize
+  sorted.forEach((label, i) => {
+    const hue = Math.round((360 * i) / n);
+    const sat = 72;
+    const light = 55;
+    map.set(label, `hsl(${hue}, ${sat}%, ${light}%)`);
+  });
+  return map;
+}
 
-// tiny confetti
+// Tiny confetti
 function fireConfetti() {
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:9999';
@@ -38,7 +50,8 @@ function fireConfetti() {
   const dpr = window.devicePixelRatio || 1;
   const resize = () => { canvas.width = innerWidth*dpr; canvas.height = innerHeight*dpr; };
   resize(); addEventListener('resize', resize);
-  const N = 140, colors = PALETTE;
+  const N = 140;
+  const colors = Array.from({length:N}, (_, i) => `hsl(${(i*11)%360}, 70%, 55%)`);
   const parts = Array.from({length:N},(_,i)=>({
     x: Math.random()*canvas.width, y: -Math.random()*canvas.height*0.15,
     r: (6+Math.random()*6)*dpr, vx: (-1+Math.random()*2)*0.8*dpr,
@@ -60,7 +73,13 @@ function fireConfetti() {
 
 export default function Tracker() {
   const router = useRouter();
-  const [state, setState] = useState<State | null>(null);
+
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [txns, setTxns] = useState<Txn[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState('');
 
   const vibes = useRef([
@@ -71,14 +90,70 @@ export default function Tracker() {
   ]);
   const [vibe, setVibe] = useState(vibes.current[0]);
 
-  // Add Expense modal
+  // Form modal
   const [openForm, setOpenForm] = useState(false);
   const [form, setForm] = useState({ name: '', category: '', amount: '', date: todayStr() });
 
-  useEffect(()=> {
-    setState(loadState());
-  }, []);
-  useEffect(()=> {
+  // --------- API (relative same-origin) ---------
+  async function fetchBalances(){ const r=await fetch('/api/balances', { cache:'no-store' }); setAccounts((await r.json()).accounts||[]); }
+  async function fetchTxns(){ const r=await fetch('/api/transactions', { cache:'no-store' }); const j=await r.json(); setTxns((j.transactions||[]).sort((a:Txn,b:Txn)=> b.id.localeCompare(a.id))); }
+  async function fetchAlerts(){ const r=await fetch('/api/alerts', { cache:'no-store' }); const j=await r.json(); setAlerts((j.alerts||[]).sort((a:Alert,b:Alert)=> (b.created_at||'').localeCompare(a.created_at||''))); }
+  async function fetchExpenses(){ const r=await fetch('/api/expenses', { cache:'no-store' }); const j=await r.json(); setExpenses((j.expenses||[]).sort((a:Expense,b:Expense)=> (b.date||'').localeCompare(a.date||''))); }
+  async function fetchCategories(){ 
+    // categories are derived on server from expenses; GET is all we need
+    const r=await fetch('/api/categories', { cache:'no-store' }); 
+    const j=await r.json(); setCategories((j.categories||[]).sort()); 
+  }
+
+  async function refreshAll(){ await Promise.all([fetchBalances(),fetchTxns(),fetchAlerts(),fetchExpenses(),fetchCategories()]); }
+
+  async function markRentPaid() {
+    setBusy(true);
+    try {
+      await fetch('/api/autopay/rent', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: todayStr() }) });
+      await refreshAll();
+      setFlash('Rent recorded. 💸'); setTimeout(()=>setFlash(''), 1400);
+      fireConfetti();
+    } finally { setBusy(false); }
+  }
+  async function markPayrollDeposited() {
+    setBusy(true);
+    try {
+      await fetch('/api/autopay/payroll', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ date: todayStr() }) });
+      await refreshAll();
+      setFlash('Payroll deposited. ✅'); setTimeout(()=>setFlash(''), 1400);
+      fireConfetti();
+    } finally { setBusy(false); }
+  }
+
+  async function submitExpense(e: React.FormEvent){
+    e.preventDefault();
+    const amt = parseFloat(form.amount||'0');
+    const cat = (form.category||'').trim() || 'Other';
+    if(!form.name || isNaN(amt) || amt<=0) return;
+    await fetch('/api/expenses', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ name: form.name, category: cat, amount: amt, date: form.date })
+    });
+    // Categories are derived, no POST to /api/categories (it was 405)
+    setOpenForm(false);
+    setForm({ name:'', category:'', amount:'', date: todayStr() });
+    await refreshAll();
+    setFlash('Expense logged! 🎉'); setTimeout(()=>setFlash(''), 1600);
+    fireConfetti();
+  }
+
+  // Clear everything and go back to setup
+  async function resetAndGoToSetup() {
+    setBusy(true);
+    try {
+      await fetch('/api/reset', { method: 'POST' }).catch(()=>{});
+      router.push('/welcome');
+    } finally { setBusy(false); }
+  }
+
+  useEffect(()=>{ refreshAll().catch(console.error); },[]);
+  useEffect(()=>{
     const id = setInterval(()=>{
       setVibe(v => {
         const idx = (vibes.current.indexOf(v)+1) % vibes.current.length;
@@ -88,22 +163,9 @@ export default function Tracker() {
     return ()=>clearInterval(id);
   },[]);
 
-  if (!state) {
-    return (
-      <main style={{ fontFamily:'ui-sans-serif, system-ui', padding:24 }}>
-        <button onClick={()=>router.push('/welcome')} style={{ padding:'8px 12px', border:'1px solid #ddd', borderRadius:10, background:'#fff' }}>
-          ← Back to Welcome
-        </button>
-        <div style={{ marginTop:20 }}>Loading…</div>
-      </main>
-    );
-  }
-
-  const { checking, expenses, txns, alerts } = state;
-
-  // KPIs
   const now = new Date();
   const thisKey = monthKey(now);
+
   const spendThis = useMemo(()=>{
     let sum = 0;
     for(const e of expenses){
@@ -113,16 +175,27 @@ export default function Tracker() {
     return sum;
   },[expenses, thisKey]);
 
-  // donut data
+  const checking = accounts.find(a=>a.name==='Checking')?.balance ?? 0;
+
   const byCat = useMemo(()=>{
     const map = new Map<string, number>();
-    for(const e of expenses) map.set(e.category, (map.get(e.category)||0) + Math.abs(e.amount));
+    for(const e of expenses) {
+      const d = new Date(e.date);
+      if (monthKey(d) === thisKey) {
+        map.set(e.category, (map.get(e.category)||0) + Math.abs(e.amount));
+      }
+    }
     const total = Array.from(map.values()).reduce((a,b)=>a+b,0);
     const entries = Array.from(map.entries()).sort((a,b)=>b[1]-a[1]);
     return { entries, total };
-  },[expenses]);
+  },[expenses, thisKey]);
 
-  function donutPaths(entries: [string,number][], total: number){
+  const labelColorMap = useMemo(() => {
+    const labels = byCat.entries.map(([label]) => label);
+    return buildLabelColorMap(labels);
+  }, [byCat.entries]);
+
+  function donutPaths(entries: [string,number][], total: number, labelColor: Map<string,string>){
     const paths: {d:string; label:string; value:number; color:string}[] = [];
     if(total<=0) return paths;
     const cx=70, cy=70, r=58; let start=-Math.PI/2;
@@ -132,81 +205,44 @@ export default function Tracker() {
       const x2=cx+r*Math.cos(end),   y2=cy+r*Math.sin(end);
       const large = a>Math.PI?1:0;
       const d = `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`;
-      paths.push({ d, label, value: val, color: PALETTE[hashColorIndex(label, PALETTE.length)] });
+      const color = labelColor.get(label) || 'hsl(0,0%,60%)';
+      paths.push({ d, label, value: val, color });
       start=end;
     }
     return paths;
   }
-  const donut = donutPaths(byCat.entries, byCat.total);
+  const donut = donutPaths(byCat.entries, byCat.total, labelColorMap);
 
-  function showFlash(msg: string, confetti=false) {
-    setFlash(msg);
-    setTimeout(()=>setFlash(''), 1500);
-    if (confetti) fireConfetti();
-  }
-
-  function onRentPaid() {
-    const s = loadState();
-    markRentPaidInState(s, todayStr());
-    setState({ ...s });
-    showFlash('Rent recorded. 💸', true);
-  }
-
-  function onPayrollDeposited() {
-    const s = loadState();
-    markPayrollPostedInState(s, todayStr());
-    setState({ ...s });
-    showFlash('Payroll deposited. ✅', false);
-  }
-
-  function onSubmitExpense(e: React.FormEvent) {
-    e.preventDefault();
-    const amt = parseFloat(form.amount||'0');
-    const cat = (form.category||'').trim() || 'Other';
-    if(!form.name || isNaN(amt) || amt<=0) return;
-    const s = loadState();
-    addExpenseToState(s, { name: form.name, category: cat, amount: amt, date: form.date });
-    setState({ ...s });
-    setOpenForm(false);
-    setForm({ name:'', category:'', amount:'', date: todayStr() });
-    showFlash('Expense logged! 🎉', true);
-  }
-
-  function onReset() {
-    localStorage.removeItem('pm_state');
-    router.push('/welcome');
-  }
-
+  // UI
   return (
     <main style={{ fontFamily:'ui-sans-serif, system-ui', padding:24, maxWidth:1240, margin:'0 auto' }}>
-      {/* Top controls */}
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, gap:12 }}>
-        <button onClick={()=>router.push('/welcome')}
-          style={{ padding:'8px 12px', border:'1px solid #ddd', borderRadius:10, background:'#fff' }}>
-          ← Back to Welcome
-        </button>
-        <button onClick={onReset}
-          style={{ padding:'8px 12px', border:'1px solid #ddd', borderRadius:10, background:'#fef3c7' }}>
-          Reset & Setup
-        </button>
-      </div>
-
       {/* header */}
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
-        <div>
-          <h1 style={{ fontSize:28, fontWeight:800, marginBottom:4 }}>Pranaya’s Money Tracker</h1>
-          <p style={{ opacity:.75, marginBottom:8 }}>
-            Add expenses, categorize spending & income, and budget at a glance with friendly charts and alerts.
-          </p>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <a href="/welcome" style={{ color:'#4f46e5', textDecoration:'none', fontSize:13 }}>← Back to Welcome</a>
         </div>
-
-        <div style={{ border:'1px solid #eee', borderRadius:12, padding:'10px 14px', minWidth:260, background:'#fbfbff' }}>
-          <div style={{ fontWeight:700, marginBottom:6 }}>Account Overview</div>
-          <div style={{ fontSize:13, display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-            <div><div style={{ opacity:.6, fontSize:12 }}>Checking</div><div style={{ fontWeight:700 }}>${checking.toFixed(2)}</div></div>
-            <div><div style={{ opacity:.6, fontSize:12 }}>This Month Spend</div><div style={{ fontWeight:700 }}>${spendThis.toFixed(0)}</div></div>
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          <button
+            onClick={resetAndGoToSetup}
+            style={{ padding:'8px 12px', border:'1px solid #ddd', borderRadius:10, background:'#fef3c7' }}
+          >
+            Reset & Setup
+          </button>
+          <div style={{ border:'1px solid #eee', borderRadius:12, padding:'8px 12px', minWidth:260, background:'#fbfbff' }}>
+            <div style={{ fontWeight:700, marginBottom:6 }}>Account Overview</div>
+            <div style={{ fontSize:13, display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+              <div><div style={{ opacity:.6, fontSize:12 }}>Checking</div><div style={{ fontWeight:700 }}>${checking.toFixed(2)}</div></div>
+              <div><div style={{ opacity:.6, fontSize:12 }}>This Month Spend</div><div style={{ fontWeight:700 }}>${spendThis.toFixed(0)}</div></div>
+            </div>
           </div>
         </div>
+      </div>
+
+      <div style={{ marginTop:10, marginBottom:8 }}>
+        <h1 style={{ fontSize:28, fontWeight:800, marginBottom:4 }}>Pranaya’s Money Tracker</h1>
+        <p style={{ opacity:.75, marginBottom:8 }}>
+          Add expenses, categorize spending & income, and budget at a glance with friendly charts and alerts.
+        </p>
       </div>
 
       {flash && <div style={{ marginTop:12, marginBottom:8, padding:'8px 12px', border:'1px solid #d1fadf', background:'#f0fff4', borderRadius:10 }}>{flash}</div>}
@@ -215,10 +251,10 @@ export default function Tracker() {
         <button disabled style={{ padding:'10px 14px', borderRadius:10, border:'1px solid #ddd', background:'#e8f5e9' }}>
           Connected
         </button>
-        <button onClick={onRentPaid} style={{ padding:'10px 14px', borderRadius:10, border:'1px solid #ddd', background:'#fff' }}>
+        <button onClick={markRentPaid} disabled={busy} style={{ padding:'10px 14px', borderRadius:10, border:'1px solid #ddd', background:'#fff' }}>
           Rent paid
         </button>
-        <button onClick={onPayrollDeposited} style={{ padding:'10px 14px', borderRadius:10, border:'1px solid #ddd', background:'#fff' }}>
+        <button onClick={markPayrollDeposited} disabled={busy} style={{ padding:'10px 14px', borderRadius:10, border:'1px solid #ddd', background:'#fff' }}>
           Payroll deposited
         </button>
         <button onClick={()=>setOpenForm(true)} style={{ padding:'10px 14px', borderRadius:10, border:'1px solid #ddd', background:'#f7f7ff' }}>
@@ -246,7 +282,7 @@ export default function Tracker() {
               </div>
               <div style={{ marginTop:10, marginInline:'auto', width:'100%', maxWidth:320, display:'grid', rowGap:10 }}>
                 {byCat.entries.map(([label, val]) => {
-                  const color = PALETTE[hashColorIndex(label, PALETTE.length)];
+                  const color = labelColorMap.get(label) || 'hsl(0,0%,60%)';
                   return (
                     <div key={label} style={{ display:'grid', gridTemplateColumns:'1fr auto', alignItems:'center', columnGap:16 }}>
                       <div style={{ display:'flex', alignItems:'center', gap:8, minWidth:0 }}>
@@ -260,7 +296,7 @@ export default function Tracker() {
               </div>
             </>
           )}
-          <div style={{ marginTop:'auto', fontSize:12, color:'#6b7280' }}>💡 tip: to add expense, press on the <strong>Add expense</strong> filter.</div>
+          <div style={{ marginTop:'auto', fontSize:12, color:'#6b7280' }}>💡 tip: to add expense, press on the <strong>Add expense</strong> button above.</div>
           <div style={{ marginTop:4, fontSize:12, color:'#6b7280' }}>🌈 {vibe}</div>
         </div>
 
@@ -268,11 +304,11 @@ export default function Tracker() {
         <div style={{ border:'1px solid #eee', borderRadius:12, padding:16, height:520, display:'flex', flexDirection:'column' }}>
           <h2 style={{ fontSize:18, fontWeight:700, marginBottom:8 }}>Alerts</h2>
           <ul style={{ display:'grid', gap:10, overflowY:'auto', paddingRight:6, maxHeight:'100%' }}>
-            {alerts.map((al: Alert)=>(
+            {alerts.map((al)=>(
               <li key={al.id} style={{ padding:12, background:'#fafafa', borderRadius:10, border:'1px solid #eee' }}>
                 <div style={{ fontWeight:700, marginBottom:4 }}>{prettyKind(al.kind)}</div>
                 <div style={{ fontSize:14, marginBottom:4 }}>{al.message}</div>
-                <div style={{ fontSize:12, opacity:.7 }}>Detected: {al.createdAt ? new Date(al.createdAt).toLocaleString() : ''}</div>
+                <div style={{ fontSize:12, opacity:.7 }}>Detected: {al.created_at ? new Date(al.created_at).toLocaleString() : ''}</div>
               </li>
             ))}
             {alerts.length===0 && <li style={{ opacity:.6 }}>No alerts yet.</li>}
@@ -284,7 +320,7 @@ export default function Tracker() {
           <h2 style={{ fontSize:18, fontWeight:700, marginBottom:8 }}>Transactions</h2>
           <div style={{ overflowY:'auto', paddingRight:6 }}>
             <table style={{ width:'100%', borderCollapse:'separate', borderSpacing:0, tableLayout:'fixed' }}>
-              <colgroup><col style={{ width:'130px' }} /><col /><col style={{ width:'140px' }} /></colgroup>
+              <colgroup><col style={{ width: '130px' }} /><col /><col style={{ width: '140px' }} /></colgroup>
               <thead>
                 <tr>
                   <th style={{ textAlign:'left', borderBottom:'1px solid #eee', padding:'8px 0', paddingRight:18 }}>Date</th>
@@ -293,7 +329,7 @@ export default function Tracker() {
                 </tr>
               </thead>
               <tbody>
-                {txns.map((txn: Txn)=>(
+                {txns.map(txn=>(
                   <tr key={txn.id} style={{ verticalAlign:'top' }}>
                     <td style={{ padding:'10px 0', paddingRight:18, borderBottom:'1px dashed #f3f3f3', whiteSpace:'nowrap' }}>{txn.date}</td>
                     <td style={{ padding:'10px 0', borderBottom:'1px dashed #f3f3f3' }}>
@@ -321,7 +357,7 @@ export default function Tracker() {
       {/* Modal: Add Expense */}
       {openForm && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.2)', display:'flex', alignItems:'center', justifyContent:'center' }}>
-          <form onSubmit={onSubmitExpense} style={{ background:'#fff', padding:20, borderRadius:12, minWidth:340, border:'1px solid #eee' }}>
+          <form onSubmit={submitExpense} style={{ background:'#fff', padding:20, borderRadius:12, minWidth:340, border:'1px solid #eee' }}>
             <h3 style={{ marginBottom:12, fontWeight:700 }}>Add Expense</h3>
             <div style={{ display:'grid', gap:10 }}>
               <label style={{ display:'grid', gap:6 }}>

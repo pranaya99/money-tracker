@@ -1,5 +1,7 @@
-export const runtime = 'nodejs';
+import { NextResponse } from 'next/server';
+import { db } from '@/lib/store';
+export const dynamic = 'force-dynamic';
 
-import { NextResponse } from "next/server";
-import { db } from "../../../lib/store";
-export async function GET() { return NextResponse.json({ accounts: db.accounts }); }
+export async function GET() {
+  return NextResponse.json({ accounts: db.accounts });
+}
